@@ -17,6 +17,7 @@ using System.Threading;
 using VixenModules.Output.GenericSocket;
 using SuperSocket.SocketBase;
 using SuperSocket.SocketBase.Protocol;
+using System.Collections.Generic;
 
 namespace VixenModules.Output.GenericSocket
 {
@@ -46,10 +47,12 @@ namespace VixenModules.Output.GenericSocket
 		private int _retryCounter;
 		private static NLog.Logger Logging = NLog.LogManager.GetCurrentClassLogger();
         private AppServer _server;
-        private AppSession _session;
 
         // Thread signal.
         public static ManualResetEvent allDone = new ManualResetEvent(false);
+
+        // Sessions
+        private List<AppSession> _sessions = new List<AppSession>();
 
 		public Module()
 		{
@@ -64,18 +67,21 @@ namespace VixenModules.Output.GenericSocket
 
 		public override void UpdateState(int chainIndex, ICommand[] outputStates)
 		{
-
-            if (_session != null && _session.Connected)
-            {
-                int channel = 0;
-                foreach (ICommand os in outputStates) {
-                    string val = "0";
-                    if (os != null)
-                    {
-                        val = os.CommandValue.ToString();
+            foreach (AppSession session in _sessions) {
+                if (session != null && session.Connected)
+                {
+                    session.Send("SOC"); // Define start of each section of channels
+                    int channel = 0;
+                    foreach (ICommand os in outputStates) {
+                        string val = "0";
+                        if (os != null)
+                        {
+                            val = os.CommandValue.ToString();
+                        }
+                        session.Send(String.Format("{0}:{1}", channel, val));
+                        channel += 1;
                     }
-                    _session.Send(String.Format("{0}:{1}", channel, val));
-                    channel += 1;
+                    session.Send("EOC"); // Define end of each section of channels
                 }
             }
 		}
@@ -141,12 +147,18 @@ namespace VixenModules.Output.GenericSocket
                 _server = new AppServer();
                 _server.Setup(_Data.Port);
                 _server.NewSessionConnected += new SessionHandler<AppSession>(server_NewRequestReceived);
+                _server.SessionClosed += new SessionHandler<AppSession, SuperSocket.SocketBase.CloseReason>(server_ClosedSession);
             }
 		}
 
         private void server_NewRequestReceived(AppSession session)
         {
-            _session = session;
+            _sessions.Add(session);
+        }
+
+        private void server_ClosedSession(AppSession session, SuperSocket.SocketBase.CloseReason reason)
+        {
+            _sessions.Remove(session);
         }
 
 		public void _retryTimer_Elapsed(object source, ElapsedEventArgs e)
